@@ -13,7 +13,7 @@ namespace DIAuditor
     {
         static void Main(string[] args)
         {
-            const string Version = "20260415 beta";
+            const string Version = "20260722 beta";
             // Use periods to separate decimals
             CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
             Console.WriteLine("DIAuditor: Quality metrics for Data-Independent Acquisition experiments");
@@ -56,6 +56,7 @@ namespace DIAuditor
                 RawsRunner.FileURI = new Uri(current);
                 RawsRunner.ReadFromMZML(XMLfile);
                 RawsRunner.ParseScanNumbers();
+                //RawsRunner.DebugPrint();
             }
             Timer.Stop();
             Duration = Timer.Elapsed;
@@ -250,8 +251,8 @@ namespace DIAuditor
         public float TotalTICMax = 0f;
         public int PkCount50ileMin = Int32.MaxValue;
         public int PkCount50ileMax = 0;
-        public static int MaxPkCount = 10000;
-        public int[] mzMLPeakCountDistn = new int[MaxPkCount + 1];
+        // public static int MaxPkCount = 10000;
+        // public int[] mzMLPeakCountDistn = new int[MaxPkCount + 1];
         // Per-scan metrics
         public MS1Scan MS1Table = new MS1Scan();
         public ScanMetrics ScansTable = new ScanMetrics();
@@ -261,7 +262,39 @@ namespace DIAuditor
         public LCMSMSExperiment Next;
         private int LastPeakCount;
         private string LastNativeID = "";
-
+        public void DebugPrint()
+        {
+            MS1Scan MS1Runner = MS1Table;
+            ScanMetrics MS2Runner = ScansTable;
+            int Counter = 0;
+            Console.WriteLine("MS1 Scans");
+            Console.WriteLine("ScanStartTime\tTIC\tPkCount\tMassResolvingPower");
+            while (Counter < 200)
+            {
+                Console.WriteLine(MS1Runner.ScanStartTime + "\t" +
+                    MS1Runner.TIC + "\t" +
+                    MS1Runner.PkCount + "\t" +
+                    MS1Runner.MassResolvingPower);
+                MS1Runner = MS1Runner.Next;
+                Counter++;
+            }
+            Counter = 0;
+            Console.WriteLine("MSn Scans");
+            Console.WriteLine("NativeID\tScanNumber\tScanStartTime\tmzMLtic\tmzMLPeakCount\tMassResolvingPower\tMobilityValue\tIsolationTarget");
+            while (Counter < 200)
+            {
+                Console.WriteLine(MS2Runner.NativeID + "\t" +
+                    MS2Runner.ScanNumber + "\t" +
+                    MS2Runner.ScanStartTime + "\t" +
+                    MS2Runner.mzMLtic + "\t" +
+                    MS2Runner.mzMLPeakCount + "\t" +
+                    MS2Runner.MassResolvingPower +"\t" +
+                    MS2Runner.MobilityValue + "\t" +
+                    MS2Runner.IsolationTarget);
+                MS2Runner = MS2Runner.Next;
+                Counter++;
+            }
+        }
         public void ComputeMS1Metrics()
         {
             MS1Runner = this.MS1Table.Next;
@@ -455,6 +488,7 @@ namespace DIAuditor
             ScansRunner = ScansTable;
             MS1Runner = MS1Table;
             int CurrentScanType = 1;
+            bool RunHasStarted = false;
             while (Xread.Read())
             {
                 var ThisNodeType = Xread.NodeType;
@@ -470,6 +504,7 @@ namespace DIAuditor
                           instrument model, and serial number.
                         */
                         StartTimeStamp = Xread.GetAttribute("startTimeStamp");
+                        RunHasStarted = true;
                     }
                     else if (Xread.Name == "spectrum")
                     {
@@ -483,6 +518,49 @@ namespace DIAuditor
                         var ThisPeakCount = Xread.GetAttribute("defaultArrayLength");
                         LastPeakCount = int.Parse(ThisPeakCount);
                         LastNativeID = Xread.GetAttribute("id");
+                    }
+                    else if (Xread.Name == "referenceableParamGroupRef")
+                    {
+                        /*
+                         * If our mzML originated in SCIEX MS Data Converter,
+                         * the msLevels are not specified for each spectrum;
+                         * instead, each spectrum makes reference to a
+                         * referenceableParamGroup at the head of the file.
+                         * Neither ProteoWizard nor TIMSCONVERT use these.
+                         */
+                        var TargetReference = Xread.GetAttribute("ref");
+                        if (TargetReference.EndsWith("SpectrumParams"))
+                        {
+                            if (TargetReference == "sample1experiment1SpectrumParams")
+                                CurrentScanType = 1;
+                            else
+                                CurrentScanType = 2;
+                            // This is a copy of what happens below for MS:1000511
+                            if (CurrentScanType == 1)
+                            {
+                                mzMLMS1Count++;
+                                MS1Runner.Next = new MS1Scan();
+                                MS1Runner = MS1Runner.Next;
+                                MS1Runner.PkCount = LastPeakCount;
+                            }
+                            else
+                            {
+                                /* If we detect an MS of level 2 or greater in the mzML,
+                                 * we need to capture some fields that have already appeared!
+                                 * Each MS/MS is matched by an item in the linked list of
+                                 * ScanMetrics for each LCMSMSExperiment.  We will need
+                                 * to capture some information we already saw (such as the
+                                 * NativeID of this scan) and set up for collection of some
+                                 * additional information in the Activation section.
+                                 */
+                                mzMLMSnCount++;
+                                ScansRunner.Next = new ScanMetrics();
+                                ScansRunner = ScansRunner.Next;
+                                ScansRunner.NativeID = LastNativeID;
+                                ScansRunner.mzMLPeakCount = LastPeakCount;
+                            }
+
+                        }
                     }
                     else if (Xread.Name == "cvParam")
                     {
@@ -499,9 +577,12 @@ namespace DIAuditor
                               information.  The second likely cause is
                               that the CV term relating to your
                               instrument model is missing from this
-                              list.  Just add a "case" line for it and
+                              list.  Add a "case" line for it and
                               recompile.
                              */
+                            case "MS:1000032":
+                                Instrument = Xread.GetAttribute("value");
+                                break;
                             case "MS:1000126":
                             case "MS:1000557":
                             case "MS:1000932":
@@ -520,9 +601,11 @@ namespace DIAuditor
                             case "MS:1003094":
                             case "MS:1003096":
                             case "MS:1003123":
+                            case "MS:1003230":
                             case "MS:1003293":
                             case "MS:1003356":
                             case "MS:1003378":
+                            case "MS:1003383":
                                 Instrument = Xread.GetAttribute("name");
                                 break;
                             case "MS:1000529":
@@ -595,40 +678,39 @@ namespace DIAuditor
                                 }
                                 break;
                             case "MS:1000511":
-                                var ThisLevel = Xread.GetAttribute("value");
-                                CurrentScanType = int.Parse(ThisLevel);
-                                if (CurrentScanType == 1)
+                                if (RunHasStarted)
                                 {
-                                    mzMLMS1Count++;
-                                    MS1Runner.Next = new MS1Scan();
-                                    MS1Runner = MS1Runner.Next;
-                                    MS1Runner.PkCount = LastPeakCount;
-                                }
-                                else
-                                {
-                                    /*
-                                      If we detect an MS of level 2 or
-                                      greater in the mzML, we have
-                                      work to do.  Each MS/MS is
-                                      matched by an item in the linked
-                                      list of ScanMetrics for each
-                                      LCMSMSExperiment.  We will need
-                                      to capture some information we
-                                      already saw (such as the
-                                      NativeID of this scan) and set
-                                      up for collection of some
-                                      additional information in the
-                                      Activation section.
-                                     */
-                                    mzMLMSnCount++;
-                                    ScansRunner.Next = new ScanMetrics();
-                                    ScansRunner = ScansRunner.Next;
-                                    ScansRunner.NativeID = LastNativeID;
-                                    ScansRunner.mzMLPeakCount = LastPeakCount;
-                                    if (LastPeakCount > MaxPkCount)
-                                        mzMLPeakCountDistn[MaxPkCount]++;
+                                    var ThisLevel = Xread.GetAttribute("value");
+                                    CurrentScanType = int.Parse(ThisLevel);
+                                    if (CurrentScanType == 1)
+                                    {
+                                        mzMLMS1Count++;
+                                        MS1Runner.Next = new MS1Scan();
+                                        MS1Runner = MS1Runner.Next;
+                                        MS1Runner.PkCount = LastPeakCount;
+                                    }
                                     else
-                                        mzMLPeakCountDistn[LastPeakCount]++;
+                                    {
+                                        /*
+                                          If we detect an MS of level 2 or
+                                          greater in the mzML, we have
+                                          work to do.  Each MS/MS is
+                                          matched by an item in the linked
+                                          list of ScanMetrics for each
+                                          LCMSMSExperiment.  We will need
+                                          to capture some information we
+                                          already saw (such as the
+                                          NativeID of this scan) and set
+                                          up for collection of some
+                                          additional information in the
+                                          Activation section.
+                                         */
+                                        mzMLMSnCount++;
+                                        ScansRunner.Next = new ScanMetrics();
+                                        ScansRunner = ScansRunner.Next;
+                                        ScansRunner.NativeID = LastNativeID;
+                                        ScansRunner.mzMLPeakCount = LastPeakCount;
+                                    }
                                 }
                                 break;
                         }
