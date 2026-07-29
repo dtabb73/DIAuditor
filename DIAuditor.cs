@@ -13,7 +13,7 @@ namespace DIAuditor
     {
         static void Main(string[] args)
         {
-            const string Version = "20260722 beta";
+            const string Version = "20260729 beta";
             // Use periods to separate decimals
             CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
             Console.WriteLine("DIAuditor: Quality metrics for Data-Independent Acquisition experiments");
@@ -1138,7 +1138,7 @@ namespace DIAuditor
                     TSVbyRun.Write(LCMSMSRunner.TotalTICMin + delim);
                     TSVbyRun.Write(LCMSMSRunner.TotalTICMax + delim);
                     TSVbyRun.Write(LCMSMSRunner.PkCount50ileMin + delim);
-                    TSVbyRun.WriteLine(LCMSMSRunner.PkCount50ileMax + delim);
+                    TSVbyRun.WriteLine(LCMSMSRunner.PkCount50ileMax);
                     /*
                             foreach (var ThisQuartile in LCMSMSRunner.mzMLPeakCountQuartiles)
                                 TSVbyRun.Write(ThisQuartile + delim);
