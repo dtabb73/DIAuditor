@@ -13,7 +13,7 @@ namespace DIAuditor
     {
         static void Main(string[] args)
         {
-            const string Version = "20260729 beta";
+            const string Version = "20260826 beta";
             // Use periods to separate decimals
             CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
             Console.WriteLine("DIAuditor: Quality metrics for Data-Independent Acquisition experiments");
@@ -606,6 +606,7 @@ namespace DIAuditor
                             case "MS:1003356":
                             case "MS:1003378":
                             case "MS:1003383":
+                            case "MS:1003443":
                                 Instrument = Xread.GetAttribute("name");
                                 break;
                             case "MS:1000529":
