@@ -1,0 +1,541 @@
+library(ggplot2)
+library(ggrepel)
+library(ggpubr)
+library(reshape2)
+library(patchwork)
+library(scales)
+
+DIAuditorByRun <- read.table("DIAuditor-byRun.tsv", header=T, sep="\t", quote="", comment.char="")
+DIAuditorByIsolationWindow <- read.table("DIAuditor-byIsolationWindow.tsv", header=T, sep="\t", quote="", comment.char="")
+
+FilePrefix <- c("01_qehfx_lab_", "03_lumos_prg_", "04_orbive_lab_", "05_lumos_lab_", "06_lumos_lab_", "07_fusion_prg15k_", "07_fusion_prg30k_",
+	"08_fusion_prg_", "10_qehf_prg_", "13_fusion_prg_", "14_tt6600_lab_", "15_orbielite_lab_","16_tt6600_prg_", "17_qehfx_prg_",
+	"18_fusion_prg_", "19_qehfx_lab_", "20_tt5600_lab_", "21_fusion_prg_", "23_xevo_prg_", "25_fusion_prg_", "26_tt5600_lab_",
+	"28_qehf_prg_", "29_lumos_", "31_lumos_prg_", "32_lumos_lab_", "33_lumos_prg_", "34_qehf_prg_", "35_qehf_prg_",
+	"36_qehf_lab_", "37_fusion_prg_", "39_tt5600_lab_", "44_qehfx_prg_", "45_qeplus_prg_", "46_lumos_lab_", "46_lumos_prg_",
+	"47_qe_lab_", "48_lumos_prg_", "48_qehfx_prg_", "49_qe_lab_", "50_qehfx_prg_", "52_fusion_lab_", "53_qe_prg_", "54_qeplus_lab_b_",
+	"54_qeplus_lab_h_", "55_qehf_lab_", "56_orbivep_lab_", "57_qehfx_prg_", "60_lumos_lab_", "63_lumos_prg_")
+Labels = c("01","03","04","05","06","07A","07B","08","10","13","14","15","16","17","18","19","20","21","23","25","26","28","29","31","32","33",
+       "34","35","36","37","39","44","45","46L","46P","47","48L","48Q","49","50","52","53","54B","54H","55","56","57","60","63")
+Instruments = factor(c("Q-Exactive","Tribrid","Orbitrap","Tribrid","Tribrid","Tribrid","Tribrid","Tribrid","Q-Exactive","Tribrid","TripleTOF",
+		   "Orbitrap","TripleTOF","Q-Exactive","Tribrid","Q-Exactive","TripleTOF","Tribrid","Xevo","Tribrid","TripleTOF","Q-Exactive",
+		   "Tribrid","Tribrid","Tribrid","Tribrid","Q-Exactive","Q-Exactive","Q-Exactive","Tribrid","TripleTOF","Q-Exactive",
+		   "Q-Exactive","Tribrid","Tribrid","Q-Exactive","Tribrid","Q-Exactive","Q-Exactive","Q-Exactive","Tribrid","Q-Exactive",
+		   "Q-Exactive","Q-Exactive","Q-Exactive","Orbitrap","Q-Exactive","Tribrid","Tribrid"))
+Sets=data.frame(FilePrefix,Labels,Instruments)
+
+# Create the empty vectors we will be populating below
+Sets$RawCount = 0
+Sets$RTDuration = 0
+Sets$MS1CycleTime = 0
+Sets$MSnCycleTime = 0
+Sets$MSnRate = 0
+Sets$IsolationWindowCount = 0
+Sets$MinDistance = 0
+Sets$MedianDistance = 0
+Sets$MaxDistance = 0
+
+# Derive Instrument-Level Stats
+for (Index in 1:length(Sets$FilePrefix)) {
+	   FileNamePrefix = Sets$FilePrefix[Index]
+	   # Pull out the ByRun metrics rows that pertain to this particular instrument set
+	   TheseRaws = subset(DIAuditorByRun, startsWith(SourceFile, FileNamePrefix))
+	   Sets$RawCount[[Index]] = length(TheseRaws$RTDuration)
+	   Sets$RTDuration[[Index]] = median(TheseRaws$RTDuration)
+	   Sets$MS1CycleTime[[Index]] = median(TheseRaws$MS1CycleTime)
+	   Sets$MSnCycleTime[[Index]] = median(TheseRaws$AverageMedianCycleTime)
+	   Sets$MSnRate[[Index]] = median(TheseRaws$mzMLMSnCount/(TheseRaws$RTDuration*60))
+	   Sets$IsolationWindowCount[[Index]] = median(TheseRaws$IsolationWindowCount)
+	   # Grab only the isolation windows that pertain to this particular instrument set
+	   TheseRuns = subset(DIAuditorByIsolationWindow,startsWith(SourceFile, FileNamePrefix))
+	   TheseRaws = unique(TheseRuns$SourceFile)
+	   NumRaws = length(TheseRaws)
+	   NumWindows = dim(TheseRuns)[1] / NumRaws
+	   TIC50ileRTMatrix = matrix(nrow=NumRaws, ncol=NumWindows, 0)
+	   rownames(TIC50ileRTMatrix) = TheseRaws
+	   CurrentRow=1
+	   for (ThisRaw in TheseRaws) {
+	       ThisVector = subset(TheseRuns,SourceFile==ThisRaw)$TIC50ileRT
+	       TIC50ileRTMatrix[CurrentRow,] = ThisVector
+	       CurrentRow = CurrentRow+1
+	       }
+	   MDist <- dist(TIC50ileRTMatrix)
+	   Sets$MinDistance[[Index]] = min(MDist)
+	   Sets$MedianDistance[[Index]] = median(MDist)
+	   Sets$MaxDistance[[Index]] = max(MDist)
+}
+write.table(Sets,"DIAuditor-ABRF.tsv",sep="\t",row.names=F)
+
+GetCurveFor <- function(TargetLabel) {
+	    Index = grep(TargetLabel,Sets$Label)
+	    FileNamePrefix = Sets$FilePrefix[Index]
+	    TheseRuns = subset(DIAuditorByIsolationWindow,startsWith(SourceFile, FileNamePrefix))
+	    TheseRuns$IsolationWindowCenter = (TheseRuns$LoMZ + TheseRuns$HiMZ)/2
+	    TextHeader=paste("Laboratory ",TargetLabel,": ",length(levels(factor(TheseRuns$SourceFile)))," LC-MS/MS experiments\n",
+	    				 Sets$Instruments[Index],": ",Sets$IsolationWindowCount[Index]," isolation windows",sep="")
+	    Plot <- ggline(TheseRuns, x="IsolationWindowCenter", y="TIC50ileRT", color="SourceFile",
+	    	 xlab="Center of isolation window m/z", ylab="Time at midpoint of isolation window TIC",
+		 legend="none", palette="jama", title=TextHeader, numeric.x.axis=TRUE)
+	    return(Plot)
+}
+
+Sets[order(Sets$MedianDistance),]
+
+MultipleWindows <- subset(Sets, IsolationWindowCount>1)
+PubIWCount <- ggscatter(MultipleWindows, x="RTDuration",y="IsolationWindowCount",
+	      	color="Instruments",label="Labels",repel=TRUE,palette="jama",show.legend.text=FALSE) +
+		ylab("Count of isolation windows in DIA method") +
+		ylim(c(0,120)) +
+		xlab("Duration of MS/MS acquistion (min)")
+PubIWCount
+PubIWCycleTime <- ggscatter(MultipleWindows, x="MSnRate", y="MSnCycleTime",
+	       	color="Instruments",label="Labels",repel=TRUE,palette="jama",show.legend.text=FALSE) +
+		ylim(c(0, 10)) + 
+		xlim(c(0,25)) +
+		ylab("Median time between MS/MS cycles (sec)") +
+		xlab("Median rate of MS/MS acquisition (Hz)")
+PubIWCount + PubIWCycleTime + plot_layout(guides = "collect") & theme(legend.position = 'bottom') & plot_annotation(tag_levels='A')
+ggsave(file="Figure-1-Methods-and-rates.svg",width=10,height=5)
+
+PlotIWCount <- ggplot(MultipleWindows, aes(x=RTDuration,y=IsolationWindowCount,color=Instruments,label=Labels)) +
+	   	geom_point() +
+		geom_text_repel() +
+		ylab("Count of isolation windows in DIA method") +
+		ylim(c(0,120)) +
+		xlab("Duration of MS/MS acquistion (min)")
+PlotIWCount
+PlotIWCycleTime <- ggplot(MultipleWindows, aes(x=MSnRate,y=MSnCycleTime,color=Instruments,label=Labels)) +
+		geom_point() +
+		geom_text_repel() +
+		ylim(c(0, 10)) + 
+		xlim(c(0,25)) +
+		ylab("Median seconds between MS/MS cycles") +
+		xlab("Median rate of MS/MS acquisition (Hz)")
+PlotIWCycleTime
+
+Lab19 <- GetCurveFor("19")
+Lab31 <- GetCurveFor("31")
+Lab16 <- GetCurveFor("16")
+Lab46P <- GetCurveFor("46P")
+Lab19 + Lab31 + Lab16 + Lab46P & plot_annotation(tag_levels='A')
+ggsave(file="Figure-2-TIC50ileRT-Curves.svg",width=10,height=10)
+
+SpectronautStats <- function() {
+	   PG <- read.table("Spectronaut_23\\20260801_134323_xevo_Report.tsv",header=T,sep="\t",quote="")
+	   SampleAs <- grep("_SA_",names(PG))
+	   SampleBs <- grep("_SB_",names(PG))
+	   SampleCs <- grep("_SC_",names(PG))
+	   BGAL <- PG[grep("P00722",PG$PG.ProteinGroups),]
+	   LYSC <- PG[grep("P00698",PG$PG.ProteinGroups),]
+	   AMYG <- PG[grep("P69328",PG$PG.ProteinGroups),]
+	   PROG <- PG[grep("Q54181",PG$PG.ProteinGroups),]
+	   Intensities <- data.matrix(PG[,2:ncol(PG)])
+	   row.names(Intensities) <- PG$PG.ProteinGroups
+	   AllIntensities <- Intensities[complete.cases(Intensities),]
+	   means <- rowMeans(AllIntensities)
+	   sds <- apply(AllIntensities, 1, sd)
+	   TotalIntensity <- rowSums(AllIntensities)
+	   CVs <- sds/means
+	   Variation <- data.frame(TotalIntensity,CVs)
+	   TopHalf <- subset(Variation,TotalIntensity > median(TotalIntensity))
+	   BottomHalf <- subset(Variation,TotalIntensity < median(TotalIntensity))
+	   # Compute all log fold changes between samples B and samples A
+	   BGALfc <- outer(log2(na.exclude(as.numeric(BGAL[SampleBs]))),log2(na.exclude(as.numeric(BGAL[SampleAs]))),FUN="-")
+	   LYSCfc <- outer(log2(na.exclude(as.numeric(LYSC[SampleBs]))),log2(na.exclude(as.numeric(LYSC[SampleAs]))),FUN="-")
+	   AMYGfc <- outer(log2(na.exclude(as.numeric(AMYG[SampleBs]))),log2(na.exclude(as.numeric(AMYG[SampleAs]))),FUN="-")
+	   PROGfc <- outer(log2(na.exclude(as.numeric(PROG[SampleBs]))),log2(na.exclude(as.numeric(PROG[SampleAs]))),FUN="-")
+	   
+	   #Compute metrics explicitly
+	   ExptCount = dim(Intensities)[2]
+	   ### Manually grabbed the two following values from Spectronaut Log
+	   ### grep precursors xevo_AnalysisLog.txt; Text to Columns in Excel
+	   IDPrecursorsMedian = 21980
+	   IDProteinsMedian = 3403
+	   ### Manually grabbed the two following values from Spectronaut Run Summaries
+	   ### grep MS1.Average.Delta *.tsv; Text to Columns in Excel
+	   MassAccuracyMS1Median = 6.69
+	   ### grep MS2.Average.Delta *.tsv; Text to Columns in Excel
+	   MassAccuracyMS2Median = 8.39
+	   QuantProteinsAny = dim(PG)[1]
+	   QuantProteinsAll = dim(AllIntensities)[1]
+	   CVTopHalfMedian = median(TopHalf$CVs)
+	   CVBottomHalfMedian = median(BottomHalf$CVs)
+	   BGALfcMedian = median(BGALfc)
+	   LYSCfcMedian = median(LYSCfc)
+	   AMYGfcMedian = median(AMYGfc)
+	   PROGfcMedian = median(PROGfc)
+	   BGALFalsePos = sum(!is.na(BGAL[SampleCs]))
+	   LYSCFalsePos = sum(!is.na(LYSC[SampleCs]))
+	   AMYGFalsePos = sum(!is.na(AMYG[SampleCs]))
+	   PROGFalsePos = sum(!is.na(PROG[SampleCs]))
+	   BGALFalseNeg = length(SampleBs) - sum(BGAL[SampleBs]>0)
+	   LYSCFalseNeg = length(SampleBs) - sum(LYSC[SampleBs]>0)
+	   AMYGFalseNeg = length(SampleBs) - sum(AMYG[SampleBs]>0)
+	   PROGFalseNeg = length(SampleBs) - sum(PROG[SampleBs]>0)
+	   directory = "Spectronaut_23"
+	   Metrics <- data.frame(directory,ExptCount,IDPrecursorsMedian,IDProteinsMedian,MassAccuracyMS1Median,MassAccuracyMS2Median,QuantProteinsAny,QuantProteinsAll,
+	   	   CVTopHalfMedian,CVBottomHalfMedian,BGALfcMedian,LYSCfcMedian,AMYGfcMedian,PROGfcMedian,
+		   BGALFalsePos,LYSCFalsePos,AMYGFalsePos,PROGFalsePos,
+		   BGALFalseNeg,LYSCFalseNeg,AMYGFalseNeg,PROGFalseNeg)
+	   return(Metrics)
+	   }
+
+DIANNstats <- function(directory) {
+	   cat(directory,"\n")
+	   PG <- read.table(paste(directory,"report.pg_matrix.tsv",sep="/"),header=T,sep="\t",quote="")
+	   SampleAs <- grep("_SA_",names(PG))
+	   SampleBs <- grep("_SB_",names(PG))
+	   SampleCs <- grep("_SC_",names(PG))
+	   BGAL <- PG[grep("P00722",PG$Protein.Group),]
+	   LYSC <- PG[grep("P00698",PG$Protein.Group),]
+	   AMYG <- PG[grep("P69328",PG$Protein.Group),]
+	   PROG <- PG[grep("Q54181",PG$Protein.Group),]
+	   Intensities <- data.matrix(PG[,7:ncol(PG)])
+	   row.names(Intensities) <- PG$Protein.Group
+	   AllIntensities <- Intensities[complete.cases(Intensities),]
+	   means <- rowMeans(AllIntensities)
+	   sds <- apply(AllIntensities, 1, sd)
+	   TotalIntensity <- rowSums(AllIntensities)
+	   CVs <- sds/means
+	   Variation <- data.frame(TotalIntensity,CVs)
+	   TopHalf <- subset(Variation,TotalIntensity > median(TotalIntensity))
+	   BottomHalf <- subset(Variation,TotalIntensity < median(TotalIntensity))
+	   # Compute all log fold changes between samples B and samples A
+	   BGALfc <- outer(log2(na.exclude(as.numeric(BGAL[SampleBs]))),log2(na.exclude(as.numeric(BGAL[SampleAs]))),FUN="-")
+	   LYSCfc <- outer(log2(na.exclude(as.numeric(LYSC[SampleBs]))),log2(na.exclude(as.numeric(LYSC[SampleAs]))),FUN="-")
+	   AMYGfc <- outer(log2(na.exclude(as.numeric(AMYG[SampleBs]))),log2(na.exclude(as.numeric(AMYG[SampleAs]))),FUN="-")
+	   PROGfc <- outer(log2(na.exclude(as.numeric(PROG[SampleBs]))),log2(na.exclude(as.numeric(PROG[SampleAs]))),FUN="-")
+	   Stats <- read.table(paste(directory,"report.stats.tsv",sep="/"),header=T,sep="\t",quote="")
+
+	   #Compute metrics explicitly
+	   ExptCount = length(Stats$File.Name)
+	   IDPrecursorsMedian = median(Stats$Precursors.Identified)
+	   IDProteinsMedian = median(Stats$Proteins.Identified)
+	   MassAccuracyMS1Median = median(Stats$Median.Mass.Acc.MS1)
+	   MassAccuracyMS2Median = median(Stats$Median.Mass.Acc.MS2)
+	   QuantProteinsAny = dim(PG)[1]
+	   QuantProteinsAll = dim(AllIntensities)[1]
+	   CVTopHalfMedian = median(TopHalf$CVs)
+	   CVBottomHalfMedian = median(BottomHalf$CVs)
+	   BGALfcMedian = median(BGALfc)
+	   LYSCfcMedian = median(LYSCfc)
+	   AMYGfcMedian = median(AMYGfc)
+	   PROGfcMedian = median(PROGfc)
+	   BGALFalsePos = sum(!is.na(BGAL[SampleCs]))
+	   LYSCFalsePos = sum(!is.na(LYSC[SampleCs]))
+	   AMYGFalsePos = sum(!is.na(AMYG[SampleCs]))
+	   PROGFalsePos = sum(!is.na(PROG[SampleCs]))
+	   BGALFalseNeg = length(SampleBs) - sum(BGAL[SampleBs]>0)
+	   LYSCFalseNeg = length(SampleBs) - sum(LYSC[SampleBs]>0)
+	   AMYGFalseNeg = length(SampleBs) - sum(AMYG[SampleBs]>0)
+	   PROGFalseNeg = length(SampleBs) - sum(PROG[SampleBs]>0)
+	   Metrics <- data.frame(directory,ExptCount,IDPrecursorsMedian,IDProteinsMedian,MassAccuracyMS1Median,MassAccuracyMS2Median,QuantProteinsAny,QuantProteinsAll,
+	   	   CVTopHalfMedian,CVBottomHalfMedian,BGALfcMedian,LYSCfcMedian,AMYGfcMedian,PROGfcMedian,
+		   BGALFalsePos,LYSCFalsePos,AMYGFalsePos,PROGFalsePos,
+		   BGALFalseNeg,LYSCFalseNeg,AMYGFalseNeg,PROGFalseNeg)
+	   return(Metrics)
+	   }
+
+DIANNstatsNoSpikes <- function(directory) {
+	   cat(directory,"\n")
+	   PG <- read.table(paste(directory,"report.pg_matrix.tsv",sep="/"),header=T,sep="\t",quote="")
+	   mzMLs <- grep(".mzML",names(PG))
+	   BGAL <- PG[grep("P00722",PG$Protein.Group),]
+	   LYSC <- PG[grep("P00698",PG$Protein.Group),]
+	   AMYG <- PG[grep("P69328",PG$Protein.Group),]
+	   PROG <- PG[grep("Q54181",PG$Protein.Group),]
+	   Intensities <- data.matrix(PG[,7:ncol(PG)])
+	   row.names(Intensities) <- PG$Protein.Group
+	   AllIntensities <- Intensities[complete.cases(Intensities),]
+	   means <- rowMeans(AllIntensities)
+	   sds <- apply(AllIntensities, 1, sd)
+	   TotalIntensity <- rowSums(AllIntensities)
+	   CVs <- sds/means
+	   Variation <- data.frame(TotalIntensity,CVs)
+	   TopHalf <- subset(Variation,TotalIntensity > median(TotalIntensity))
+	   BottomHalf <- subset(Variation,TotalIntensity < median(TotalIntensity))
+	   # Do not compute all log fold changes between samples B and samples A
+	   Stats <- read.table(paste(directory,"report.stats.tsv",sep="/"),header=T,sep="\t",quote="")
+
+	   # Compute metrics explicitly
+	   ExptCount = length(Stats$File.Name)
+	   IDPrecursorsMedian = median(Stats$Precursors.Identified)
+	   IDProteinsMedian = median(Stats$Proteins.Identified)
+	   MassAccuracyMS1Median = median(Stats$Median.Mass.Acc.MS1)
+	   MassAccuracyMS2Median = median(Stats$Median.Mass.Acc.MS2)
+	   QuantProteinsAny = dim(PG)[1]
+	   QuantProteinsAll = dim(AllIntensities)[1]
+	   CVTopHalfMedian = median(TopHalf$CVs)
+	   CVBottomHalfMedian = median(BottomHalf$CVs)
+	   # Omit spike fold changes; these are just HeLa
+	   BGALFalsePos = sum(!is.na(BGAL[mzMLs]))
+	   LYSCFalsePos = sum(!is.na(LYSC[mzMLs]))
+	   AMYGFalsePos = sum(!is.na(AMYG[mzMLs]))
+	   PROGFalsePos = sum(!is.na(PROG[mzMLs]))
+	   Metrics <- data.frame(directory,ExptCount,IDPrecursorsMedian,IDProteinsMedian,MassAccuracyMS1Median,MassAccuracyMS2Median,QuantProteinsAny,QuantProteinsAll,
+	   	   CVTopHalfMedian,CVBottomHalfMedian,BGALFalsePos,LYSCFalsePos,AMYGFalsePos,PROGFalsePos)
+	   return(Metrics)
+	   }
+
+### ABRF Set DIA-NN analysis
+
+LabReports = c("03","05","06","07A","07B","08","10","13","14","15","16","17","18","19","20","21","23","25","26","28","29","31","32","33","34","35","36","37","39","44","45","46L","46P","47","48L","48Q","49","50","52","53","54B","54H","55","56","57","60","63")
+# Omit the DIA-NN failures
+# Omit empty report for lab 4
+# Omit report for Waters lab 23
+AllLabs = data.frame(DIANNstats("DIANN_01"))
+for (ThisLab in LabReports) {
+    if (ThisLab == "23") {
+         # The Xevo data could only be processed properly by Spectronaut.
+         AllLabs <- rbind(AllLabs,SpectronautStats())
+         }
+    else {
+    	 AllLabs <- rbind(AllLabs,DIANNstats(paste("DIANN_",ThisLab,sep="")))
+	 }
+    }
+AllLabs$Instrument = factor(c("Q-Exactive","Tribrid","Tribrid","Tribrid","Tribrid","Tribrid","Tribrid","Q-Exactive","Tribrid","TripleTOF",
+		   "Orbitrap","TripleTOF","Q-Exactive","Tribrid","Q-Exactive","TripleTOF","Tribrid","Xevo","Tribrid","TripleTOF","Q-Exactive",
+		   "Tribrid","Tribrid","Tribrid","Tribrid","Q-Exactive","Q-Exactive","Q-Exactive","Tribrid","TripleTOF","Q-Exactive",
+		   "Q-Exactive","Tribrid","Tribrid","Q-Exactive","Tribrid","Q-Exactive","Q-Exactive","Q-Exactive","Tribrid","Q-Exactive",
+		   "Q-Exactive","Q-Exactive","Q-Exactive","Orbitrap","Q-Exactive","Tribrid","Tribrid"))
+thwop = strsplit(AllLabs$directory,"_")
+thwop2 = do.call(rbind,thwop)
+AllLabs$LabCode = thwop2[,2]
+write.table(file="AllLabs.tsv",AllLabs,sep="\t",row.names=F)
+
+### Proteins Quantified in Any vs All
+AllLabs$Label=paste(AllLabs$LabCode,AllLabs$Instrument)
+SubTable = AllLabs[,c(7,8,25)]
+names(SubTable) = c("Proteins quantified in any","Proteins quantified in all","Experiment")
+AnyAll = melt(SubTable,id="Experiment")
+PubAnyAll = ggbarplot(AnyAll, x="Experiment", y="value", xlab="", ylab="Protein Groups",
+	  fill="variable", position=position_nudge(),palette="jama") +
+	  rotate() + guides(fill=guide_legend(title=""))
+ggsave(file="Supporting-Figure-1-ABRF-Quantified-in-Any-or-in-All.svg",width=7,height=9)
+
+PubSensitivity = ggscatter(AllLabs, x="IDPrecursorsMedian",y="IDProteinsMedian", color="Instrument", label="LabCode",
+	       repel=TRUE,palette="jama",show.legend.text=FALSE) +
+	       xlab("Median number of identified precursor ions") + ylab("Median number of identified proteins")
+PubCVs = ggscatter(AllLabs, x="CVTopHalfMedian", y="CVBottomHalfMedian", color="Instrument", label="LabCode",
+	       repel=TRUE,palette="jama",show.legend.text=FALSE) +
+	       xlab("Intensity CV for more intense proteins") + ylab("Intensity CV for less intense proteins") +
+	       geom_hline(yintercept=0.1, linetype = "dashed") +
+	       geom_vline(xintercept=0.1, linetype = "dashed") +
+	       xlim(0,0.25) + ylim(0,0.25)
+PubSensitivity + PubCVs  + plot_layout(guides = "collect") & theme(legend.position = 'bottom') & plot_annotation(tag_levels='A')
+ggsave(file="Figure-3-Sensitivity-and-CV.svg",width=10,height=5)
+
+# Create a figure summarizing spike protein data
+# Generate "narrow" data frames from the wide AllLabs table
+SubTable = AllLabs[,c(11:14,24)]
+# Toss two laboratories with unsatifactory identification.
+SubTable = subset(SubTable, LabCode != "15")
+SubTable = subset(SubTable, LabCode != "28")
+SpikeFC = melt(SubTable, id="LabCode")
+levels(SpikeFC$variable) <- c("BGAL","LYSC","AMYG","PROG")
+SubTable = AllLabs[,c(15:18,24)]
+SubTable = subset(SubTable, LabCode != "15")
+SubTable = subset(SubTable, LabCode != "28")
+FalseP = melt(SubTable, id="LabCode")
+levels(FalseP$variable) <- c("BGAL","LYSC","AMYG","PROG")
+SubTable = AllLabs[,c(19:22,24)]
+SubTable = subset(SubTable, LabCode != "15")
+SubTable = subset(SubTable, LabCode != "28")
+FalseN = melt(SubTable, id="LabCode")
+levels(FalseN$variable) <- c("BGAL","LYSC","AMYG","PROG")
+
+PubFC = ggscatter(SpikeFC, x="LabCode", y="value", color="variable", repel=TRUE, palette="jama", show.legend.text=FALSE) +
+		geom_vline(xintercept = "23", linetype="solid", linewidth=8, col="red", alpha=0.2) +
+		geom_vline(xintercept = "56", linetype="solid", linewidth=8, col="red", alpha=0.2) +
+		geom_hline(yintercept = 2, linetype = "dashed") +
+		scale_y_continuous(breaks = breaks_pretty()) +
+		ylab("Log2 Fold Change, Sample B vs Sample A") +
+		theme(legend.position = 'bottom') +
+		guides(color=guide_legend("Spike protein"))
+PubFP = ggbarplot(FalseP, x="LabCode", y="value", fill="variable", palette="jama", legend="none") +
+      		  ylab("False Positives") + ylim(c(0,8))
+PubFN = ggbarplot(FalseN, x="LabCode", y="value", fill="variable", palette="jama", legend="none") +
+      		  ylab("False Negatives") + ylim(c(0,8))
+PubFC + PubFP + PubFN + plot_layout(heights=c(3,1,1)) & plot_annotation(tag_levels='A')
+ggsave(file="Figure-4-Spike-trio.svg",width=15,height=10)
+
+### Contemporary Instruments
+
+### mzML-based DIAuditor analysis, Contemporary Instruments
+
+DIAuditorByRun <- read.table("DIAuditor-byRun.tsv", header=T, sep="\t", quote="", comment.char="")
+DIAuditorByIsolationWindow <- read.table("DIAuditor-byIsolationWindow.tsv", header=T, sep="\t", quote="", comment.char="")
+
+FilePrefix <- c(
+	   "PXD039414-",
+	   "PXD054015-",
+	   "PXD060356-",
+	   "PXD060363-",
+	   "PXD064087-",
+	   "PXD066701-10ng_QCHela_0418",
+	   "PXD066701-10ng_QCHela_0422",
+	   "PXD070420-",
+	   "PXD079115-",
+	   "PXD082445-QiWu500-",
+	   "PXD083893-")
+Labels <- c(
+       "PXD039414",
+       "PXD054015",
+       "PXD060356",
+       "PXD060363",
+       "PXD064087",
+       "PXD066701",
+       "PXD066701",
+       "PXD070420",
+       "PXD079115",
+       "PXD082445",
+       "PXD083893")
+Instruments <- c(
+	    "ZenoTOF 7600",
+	    "Orbitrap Astral",
+	    "timsTOF HT",
+	    "timsTOF HT",
+	    "timsTOF Pro 2",
+	    "timsTOF Ultra",
+	    "Orbitrap Astral",
+	    "ZenoTOF 7600+",
+	    "Orbitrap Tribrid Apex",
+	    "Orbitrap Ascend Tribrid",
+	    "ZenoTOF 8600")
+Manufacturer <- factor(c(
+	     "SCIEX",
+	     "Thermo",
+	     "Bruker",
+	     "Bruker",
+	     "Bruker",
+	     "Bruker",
+	     "Thermo",
+	     "SCIEX",
+	     "Thermo",
+	     "Thermo",
+	     "SCIEX"))
+Sets=data.frame(FilePrefix,Labels,Instruments,Manufacturer)
+Sets=Sets[order(Sets$Labels),]
+
+# Create the empty vectors we will be populating below
+Sets$RTDuration = 0
+Sets$MS1CycleTime = 0
+Sets$MSnCycleTime = 0
+Sets$MSnRate = 0
+Sets$IsolationWindowCount = 0
+Sets$MedianIsolationWindowWidth = 0
+Sets$MinDistance = 0
+Sets$MedianDistance = 0
+Sets$MaxDistance = 0
+
+# Derive Instrument-Level Stats
+for (Index in 1:length(Sets$FilePrefix)) {
+	   FileNamePrefix = Sets$FilePrefix[Index]
+	   # Pull out the ByRun metrics rows that pertain to this particular instrument set
+	   TheseRaws = subset(DIAuditorByRun, startsWith(SourceFile, FileNamePrefix))
+	   Sets$RTDuration[[Index]] = median(TheseRaws$RTDuration)
+	   Sets$MS1CycleTime[[Index]] = median(TheseRaws$MS1CycleTime)
+	   Sets$MSnCycleTime[[Index]] = median(TheseRaws$AverageMedianCycleTime)
+	   Sets$MSnRate[[Index]] = median(TheseRaws$mzMLMSnCount/(TheseRaws$RTDuration*60))
+	   Sets$IsolationWindowCount[[Index]] = median(TheseRaws$IsolationWindowCount)
+	   # Grab only the isolation windows that pertain to this particular instrument set
+	   TheseRuns = subset(DIAuditorByIsolationWindow,startsWith(SourceFile, FileNamePrefix))
+	   TheseRaws = unique(TheseRuns$SourceFile)
+	   NumRaws = length(TheseRaws)
+	   NumWindows = dim(TheseRuns)[1] / NumRaws
+	   Sets$MedianIsolationWindowWidth[[Index]] = median(TheseRuns$WidthMZ)
+	   cat(FileNamePrefix,": ",NumRaws,"\t",NumWindows,"\n");
+	   if (NumRaws > 1) {
+	   TIC50ileRTMatrix = matrix(nrow=NumRaws, ncol=NumWindows, 0)
+	   rownames(TIC50ileRTMatrix) = TheseRaws
+	   CurrentRow=1
+	   for (ThisRaw in TheseRaws) {
+	       ThisVector = subset(TheseRuns,SourceFile==ThisRaw)$TIC50ileRT
+	       TIC50ileRTMatrix[CurrentRow,] = ThisVector
+	       CurrentRow = CurrentRow+1
+	       }
+	   MDist <- dist(TIC50ileRTMatrix)
+	   Sets$MinDistance[[Index]] = min(MDist)
+	   Sets$MedianDistance[[Index]] = median(MDist)
+	   Sets$MaxDistance[[Index]] = max(MDist)
+	   }
+}
+
+### Figure 5A
+PubIWCycleTime <- ggscatter(MultipleWindows, x="RTDuration",y="MSnCycleTime",color="Manufacturer",label="Labels",repel=TRUE,palette="jama",show.legend.text=FALSE) +
+		xlim(c(0,90)) +
+		ylim(c(0,4)) +
+		ylab("Median seconds between MS/MS cycles") +
+		xlab("Duration of MS/MS acquisition (min)")
+PubIWCycleTime
+
+# Ascend Calibration curve
+PXD082445_010 <- read.table("DIANN-PXD082445-010/report.stats.tsv",header=T)
+PXD082445_020 <- read.table("DIANN-PXD082445-020/report.stats.tsv",header=T)
+PXD082445_050 <- read.table("DIANN-PXD082445-050/report.stats.tsv",header=T)
+PXD082445_100 <- read.table("DIANN-PXD082445-100/report.stats.tsv",header=T)
+PXD082445_200 <- read.table("DIANN-PXD082445-200/report.stats.tsv",header=T)
+PXD082445_500 <- read.table("DIANN-PXD082445-500/report.stats.tsv",header=T)
+PXD082445 <- rbind(PXD082445_010,PXD082445_020,PXD082445_050,PXD082445_100,PXD082445_200,PXD082445_500)
+PXD082445$Concentration = c(rep(10,4),rep(20,5),rep(50,5),rep(100,5),rep(200,5),rep(500,5))
+PubSerialDilutionPrec = ggscatter(PXD082445, x="Concentration", y="Precursors.Identified", palette="jama") +
+		      ylim(0,70000) + xscale("log10") +
+		      ylab("Precursor ions identified by DIA-NN") +
+		      xlab("Concentration (ng)") +
+		      geom_smooth(method = "lm", formula = y ~ log10(x), se=F) +
+		      stat_cor(aes(label = after_stat(rr.label)),digits=5)
+PubSerialDilutionPrec
+PubSerialDilutionProt = ggscatter(PXD082445, x="Concentration", y="Proteins.Identified", palette="jama") +
+		      ylim(0,7500) + xscale("log10") +
+		      ylab("Protein groups identified by DIA-NN") +
+		      xlab("Concentration (ng)") +
+		      geom_smooth(method = "lm", formula = y ~ log10(x), se=F) +
+		      stat_cor(aes(label = after_stat(rr.label)),digits=5)
+PubSerialDilutionProt
+PubSerialDilutionPrec + PubSerialDilutionProt
+ggsave(file="Supporting-Figure-2-SerialDilution.svg",width=10,height=5)
+
+### DIANN-based analysis
+
+SubDirs = c("DIANN-PXD082445-500","DIANN-PXD039414","DIANN-PXD054015","DIANN-PXD060356","DIANN-PXD060363","DIANN-PXD064087","DIANN-PXD066701-Bruker","DIANN-PXD066701-Thermo","DIANN-PXD079115","DIANN-PXD083893","DIANN-PXD070420")
+Labels <- c("PXD082445","PXD039414","PXD054015","PXD060356","PXD060363","PXD064087","PXD066701","PXD066701","PXD079115","PXD083893","PXD070420")
+Instruments <- c("Orbitrap Ascend Tribrid","ZenoTOF 7600","Orbitrap Astral","timsTOF HT","timsTOF HT","timsTOF Pro 2","timsTOF Ultra","Orbitrap Astral","Orbitrap Tribrid Apex","ZenoTOF 8600","ZenoTOF 7600")
+Manufacturer <- factor(c("Thermo","SCIEX","Thermo","Bruker","Bruker","Bruker","Bruker","Thermo","Thermo","SCIEX","SCIEX"))
+RTDuration <- c(60,16,45,80,80,60,60,60,60,69,26)
+DIANNs <- data.frame(SubDirs,Labels,Instruments,Manufacturer,RTDuration)
+DIANNs[order(DIANNs$Labels),]
+
+Metrics = data.frame(DIANNstatsNoSpikes(DIANNs$SubDirs[1]))
+for (SubDir in DIANNs$SubDirs[2:dim(DIANNs)[1]]) {
+    Metrics <- rbind(Metrics,DIANNstatsNoSpikes(SubDir))
+}
+
+DIANNStat = merge(DIANNs,Metrics,by.x="SubDirs",by.y="directory")
+
+### QuantInAny graph
+DIANNStat$Label=paste(DIANNStat$Labels,"\n",DIANNStat$Instruments)
+SubTable = DIANNStat[,c(11,12,19)]
+names(SubTable) = c("Proteins quantified in any","Proteins quantified in all","Experiment")
+AnyAll = melt(SubTable,id="Experiment")
+PubAnyAll = ggbarplot(AnyAll, x="Experiment", y="value", xlab="", ylab="Protein Groups",
+	  fill="variable", position=position_nudge(), palette="jama") +
+	  rotate() + guides(fill=guide_legend(title=""))
+PubAnyAll
+ggsave(file="Supporting-Figure-3-Contemporary-Quantified-in-Any-or-in-All.svg",width=7,height=7)
+
+### Before you run this code, be sure to generate "PubIWCycleTime" image above from Contemporary Instrument DIAuditor metrics.
+PubSensitivity = ggscatter(DIANNStat, x="IDPrecursorsMedian", y="IDProteinsMedian", color="Manufacturer", label="Labels",repel=TRUE,palette="jama",show.legend.text=FALSE) +
+	       xlab("Median number of identified precursor ions") +
+	       ylab("Median number of identified proteins")
+PubIWCycleTime + PubSensitivity + plot_layout(guides = "collect") & theme(legend.position = 'bottom') & plot_annotation(tag_levels='A')
+ggsave(file="Figure-5-Methods-and-rates.svg",width=10,height=5)
+
+PubCVs = ggscatter(DIANNStat, x="CVTopHalfMedian",y="CVBottomHalfMedian",color="Manufacturer",label="Labels",repel=TRUE,palette="jama",show.legend.text=FALSE) +
+		geom_hline(yintercept=0.1, linetype = "dashed") +
+		geom_vline(xintercept=0.1, linetype = "dashed") +
+		xlab("Intensity CV for more intense proteins") +
+		ylab("Intensity CV for less intense proteins") +
+		xlim(0,0.2) + ylim(0,0.2) +
+		theme(legend.position="bottom")
+PubCVs
+ggsave(file="Supporting-Figure-4-Contemporary-CVs.svg",width=5,height=5)
