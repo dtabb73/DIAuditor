@@ -13,7 +13,7 @@ namespace DIAuditor
     {
         static void Main(string[] args)
         {
-            const string Version = "20260826 beta";
+            const string Version = "20261106 beta";
             // Use periods to separate decimals
             CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
             Console.WriteLine("DIAuditor: Quality metrics for Data-Independent Acquisition experiments");
@@ -620,7 +620,7 @@ namespace DIAuditor
                                 {
                                     // We are in minutes; do nothing
                                 }
-                                else if (Xread.GetAttribute("unitAccession")== "UO:0000028")
+                                else if (Xread.GetAttribute("unitAccession")== "UO:0000010")
                                 {
                                     // We are in seconds; divide by 60.
                                     ThisStartTimeFloat = ThisStartTimeFloat / 60.0f;
@@ -885,56 +885,58 @@ namespace DIAuditor
                 );
                 run.QualityMetrics.Add(new QualityMetric
                 {
-                    //Can I use the same CV term for MS1 resolution as I use for MS2 resolution?
+                    //Can I use the same CV term for MS1 resolution as I use for MS2 resolution?  NO!  TODO
                     Accession = "MS:1000800",
-                    Name = "MS1 mass resolving power",
+                    Name = "mass resolving power",
                     Value = LCMSMSRunner.MS1Resolution
                 }
                 );
                 run.QualityMetrics.Add(new QualityMetric
                 {
                     Accession = "MS:4000190",
-                    Name = "The retention times at which 25%, 50%, and 75% of MS1 TIC have been accumulated",
+                    Name = "MS1 TIC quantile RT",
                     Value = MS1TICQuartileRTs
                 }
                 );
                 run.QualityMetrics.Add(new QualityMetric
                 {
+                    // Will need new metric term to specify MS1?
                     Accession = "MS:1000285",
-                    Name = "Summed Total Ion Current from MS1",
+                    Name = "total ion current",
                     Value = LCMSMSRunner.MS1TotalTIC
                 }
                 );
                 run.QualityMetrics.Add(new QualityMetric
                 {
                     Accession = "MS:4000192",
-                    Name = "The median cycle time between MS1 measurements",
+                    Name = "MS1 median cycle time",
                     Value = LCMSMSRunner.MS1CycleTime
                 }
                 );
                 run.QualityMetrics.Add(new QualityMetric
                 {
                     Accession = "MS:4000061",
-                    Name = "MS1 peak count quartiles",
+                    Name = "MS1 density quantiles",
                     Value = MS1PkCountQuartiles
                 }
                 );
                 run.QualityMetrics.Add(new QualityMetric
                 {
                     Accession = "MS:4000194",
-                    Name = "Count of isolation windows in this DIA method",
+                    Name = "DIA isolation window count",
                     Value = LCMSMSRunner.SWATHCount
                 }
                 );
                 run.QualityMetrics.Add(new QualityMetric
                 {
                     Accession = "MS:4000196",
-                    Name = "Range of MS/MS measurements per isolation window in this DIA method",
+                    Name = "DIA isolation window scan count range",
                     Value = SWATHCycleCountRange
                 }
                 );
                 run.QualityMetrics.Add(new QualityMetric
                 {
+                    // Why is this CV term used?  THWOP
                     Accession = "MS:1003159",
                     Name = "Range of lowest m/z in lowest isolation window to highest m/z of highest isolation window in this DIA method",
                     Value = SWATHmzRange
@@ -943,21 +945,21 @@ namespace DIAuditor
                 run.QualityMetrics.Add(new QualityMetric
                 {
                     Accession = "MS:4000195",
-                    Name = "Range of isolation window widths in this DIA method",
+                    Name = "DIA isolation window m/z widths",
                     Value = SWATHWidthRange
                 }
                 );
                 run.QualityMetrics.Add(new QualityMetric
                 {
                     Accession = "MS:4000197",
-                    Name = "The range of retention times at half TIC among isolation windows",
+                    Name = "DIA isolation window half TIC RT",
                     Value = SWATHRetentionTimeRangeAtHalfTIC
                 }
                 );
                 run.QualityMetrics.Add(new QualityMetric
                 {
                     Accession = "MS:4000198",
-                    Name = "The range of TIC sums among isolation windows",
+                    Name = "DIA isolation window TIC",
                     Value = SWATHTICSumRange
                 }
                 );
@@ -1005,21 +1007,21 @@ namespace DIAuditor
                 run.QualityMetrics.Add(new QualityMetric
                 {
                     Accession = "MS:1000827",
-                    Name = "The target m/z values for each isolation window",
+                    Name = "isolation window target m/z",
                     Value = IsolationWindowTargets
                 }
                 );
                 run.QualityMetrics.Add(new QualityMetric
                 {
                     Accession = "MS:1000828",
-                    Name = "The lower offset m/z values for each isolation window",
+                    Name = "isolation window lower offset",
                     Value = IsolationWindowOffsetLo
                 }
                 );
                 run.QualityMetrics.Add(new QualityMetric
                 {
                     Accession = "MS:1000829",
-                    Name = "The upper offset m/z values for each isolation window",
+                    Name = "isolation window upper offset",
                     Value = IsolationWindowOffsetHi
                 }
                 );
@@ -1027,43 +1029,45 @@ namespace DIAuditor
                 {
                     // We want this to provide information on tims thresholds, too, but that's not currently included in mzML data model.
                     Accession = "MS:1001581",
-                    Name = "FAIMS compensation voltage for each isolation window",
+                    Name = "FAIMS compensation voltage",
                     Value = MobilityValues
                 });
                 run.QualityMetrics.Add(new QualityMetric
                 {
-                    Accession = "MS:1000234",
-                    Name = "Mass Resolving Power for each isolation window",
+                    // TODO: need to replace this with novel metric for MS2 resolution.
+                    Accession = "MS:1000800",
+                    Name = "Mass Resolving Power",
                     Value = ResolvingPowers
                 });
                 run.QualityMetrics.Add(new QualityMetric
                 {
                     Accession = "MS:4000060",
-                    Name = "Number of MS2 Spectra for each isolation window",
+                    Name = "Number of MS2 Spectra",
                     Value = MSMSCounts
                 });
                 run.QualityMetrics.Add(new QualityMetric
                 {
                     Accession = "MS:4000193",
-                    Name = "The median cycle time between MS2 measurements for each isolation window",
+                    Name = "DIA isolation window median cycle time",
                     Value = MedianCycleTimes
                 });
                 run.QualityMetrics.Add(new QualityMetric
                 {
                     Accession = "MS:4000191",
-                    Name = "The retention times at which 25%, 50%, and 75% of MS2 TIC have been accumulated for each isolation window",
+                    Name = "MS2 TIC quantile RT",
                     Value = RetentionTimesAtQuartilesOfTIC
                 });
                 run.QualityMetrics.Add(new QualityMetric
                 {
+                    // TODO Will need new metric term
                     Accession = "MS:1000285",
-                    Name = "Summed Total Ion Current from MS2 for each isolation window",
+                    Name = "total ion current",
                     Value = TotalTICs
                 });
                 run.QualityMetrics.Add(new QualityMetric
                 {
                     Accession = "MS:4000062",
-                    Name = "The quartiles for peak counts per MS/MS for each isolation window",
+                    Name = "MS2 density quantiles",
                     Value = PeakCountQuartiles
                 });
                 runs.Add(run);
